@@ -278,7 +278,7 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 					handler(qid, reasoning_content, true)
 				elseif content ~= "" and type(content) == "string" then
 					if is_reasoning then
-						handler(qid, "\n</details>\n</think>\n", false)
+						handler(qid, "\n</details>\n</think>\n\n", false)
 						is_reasoning = false
 					end
 					qt.response = qt.response .. content
