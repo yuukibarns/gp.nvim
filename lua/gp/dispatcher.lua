@@ -237,53 +237,54 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 			end
 
 			local lines = vim.split(lines_chunk, "\n")
+			local content = ""
+			local reasoning_content = ""
 			for _, line in ipairs(lines) do
-				if line ~= "" and line ~= nil then
-					qt.raw_response = qt.raw_response .. line .. "\n"
-				end
+				-- if line ~= "" and line ~= nil then
+				-- 	qt.raw_response = qt.raw_response .. line .. "\n"
+				-- end
 				line = line:gsub("^data: ", "")
-
-				local content = ""
-				local reasoning_content = ""
 
 				if line:match("choices") and line:match("delta") and line:match("content") then
 					line = vim.json.decode(line)
 					if line.choices[1] and line.choices[1].delta and line.choices[1].delta.reasoning_content then
-						reasoning_content = line.choices[1].delta.reasoning_content
+						reasoning_content = reasoning_content .. line.choices[1].delta.reasoning_content
 					end
 					if line.choices[1] and line.choices[1].delta and line.choices[1].delta.content then
-						content = line.choices[1].delta.content
+						content = content .. line.choices[1].delta.content
 					end
 				end
 
-				if qt.provider == "anthropic" and line:match('"text":') then
-					if line:match("content_block_start") or line:match("content_block_delta") then
-						line = vim.json.decode(line)
-						if line.delta and line.delta.text then
-							content = line.delta.text
-						end
-						if line.content_block and line.content_block.text then
-							content = line.content_block.text
-						end
-					end
-				end
+				-- if qt.provider == "anthropic" and line:match('"text":') then
+				-- 	if line:match("content_block_start") or line:match("content_block_delta") then
+				-- 		line = vim.json.decode(line)
+				-- 		if line.delta and line.delta.text then
+				-- 			content = line.delta.text
+				-- 		end
+				-- 		if line.content_block and line.content_block.text then
+				-- 			content = line.content_block.text
+				-- 		end
+				-- 	end
+				-- end
+				--
+				-- if qt.provider == "googleai" then
+				-- 	if line:match('"text":') then
+				-- 		content = vim.json.decode("{" .. line .. "}").text
+				-- 	end
+				-- end
+			end
 
-				if qt.provider == "googleai" then
-					if line:match('"text":') then
-						content = vim.json.decode("{" .. line .. "}").text
-					end
+			if reasoning_content ~= "" and type(reasoning_content) == "string" then
+				handler(qid, reasoning_content, true, false)
+			end
+			if content ~= "" and type(content) == "string" then
+				if is_reasoning then
+					handler(qid, "", true, true)
+					handler(qid, "\n</details>\n</think>\n\n", false, true)
+					is_reasoning = false
 				end
-
-				if reasoning_content ~= "" and type(reasoning_content) == "string" then
-					handler(qid, reasoning_content, true)
-				elseif content ~= "" and type(content) == "string" then
-					if is_reasoning then
-						handler(qid, "\n</details>\n</think>\n\n", false)
-						is_reasoning = false
-					end
-					qt.response = qt.response .. content
-					handler(qid, content, false)
-				end
+				qt.response = qt.response .. content
+				handler(qid, content, false, false)
 			end
 		end
 
@@ -313,23 +314,26 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 				if #buffer > 0 then
 					process_lines(buffer)
 				end
-				local raw_response = qt.raw_response
-				local content = qt.response
-				if (qt.provider == 'openai' or qt.provider == 'copilot') and content == "" and raw_response:match('choices') and raw_response:match("content") then
-					local response = vim.json.decode(raw_response)
-					if response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
-						content = response.choices[1].message.content
-					end
-					if content and type(content) == "string" then
-						qt.response = qt.response .. content
-						handler(qid, content)
-					end
-				end
+				-- local raw_response = qt.raw_response
+				-- local content = qt.response
+				-- if (qt.provider == 'openai' or qt.provider == 'copilot') and content == "" and raw_response:match('choices') and raw_response:match("content") then
+				-- 	local response = vim.json.decode(raw_response)
+				-- 	if response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
+				-- 		content = response.choices[1].message.content
+				-- 	end
+				-- 	if content and type(content) == "string" then
+				-- 		qt.response = qt.response .. content
+				-- 		handler(qid, content)
+				-- 	end
+				-- end
 
 				if is_reasoning then
-					handler(qid, "\n", false)
-					handler(qid, "\n</details>\n</think>\n", false)
+					handler(qid, "", true, true)
+					handler(qid, "\n", false, true)
+					handler(qid, "\n</details>\n</think>\n", false, true)
 					is_reasoning = false
+				else
+					handler(qid, "", false, true)
 				end
 
 				-- if qt.response == "" then
@@ -483,8 +487,16 @@ D.create_handler = function(buf, win, line, first_undojoin, prefix, cursor)
 		right_gravity = false,
 	})
 
-	local response = ""
-	return vim.schedule_wrap(function(qid, chunk, is_reasoning)
+	local response = {}
+	return vim.schedule_wrap(function(qid, chunk, is_reasoning, stop)
+		-- append new response
+		table.insert(response, chunk)
+
+		-- input control
+		if #response < 100 and not stop then
+			return
+		end
+
 		local qt = tasker.get_query(qid)
 		if not qt then
 			return
@@ -497,7 +509,7 @@ D.create_handler = function(buf, win, line, first_undojoin, prefix, cursor)
 		if skip_first_undojoin then
 			skip_first_undojoin = false
 		else
-			helpers.undojoin(buf)
+			-- helpers.undojoin(buf)
 		end
 
 		if not qt.ns_id then
@@ -511,40 +523,31 @@ D.create_handler = function(buf, win, line, first_undojoin, prefix, cursor)
 		first_line = vim.api.nvim_buf_get_extmark_by_id(buf, ns_id, ex_id, {})[1]
 
 		-- clean previous response
-		local line_count = #vim.split(response, "\n")
-		vim.api.nvim_buf_set_lines(buf, first_line + finished_lines, first_line + line_count, false, {})
+		vim.api.nvim_buf_set_lines(buf, first_line + finished_lines, first_line + finished_lines + 1, false, {})
 
-		-- append new response
-		response = response .. chunk
-		helpers.undojoin(buf)
+		-- helpers.undojoin(buf)
 
 		-- prepend prefix to each line
-		local lines = vim.split(response, "\n")
+		local lines = vim.split(table.concat(response), "\n")
 		for i, l in ipairs(lines) do
 			lines[i] = prefix .. l
 		end
 
 		-- prepend prefix > to each line inside CoT
 		if is_reasoning then
-			for i, l in ipairs(lines) do
-				lines[i] = "> " .. l
+			local new_lines = {}
+			for _, l in ipairs(lines) do
+				table.insert(new_lines, "> " .. l)
 			end
+			vim.api.nvim_buf_set_lines(buf, first_line + finished_lines, first_line + finished_lines, false, new_lines)
+		else
+			vim.api.nvim_buf_set_lines(buf, first_line + finished_lines, first_line + finished_lines, false, lines)
 		end
 
-		local unfinished_lines = {}
-		for i = finished_lines + 1, #lines do
-			table.insert(unfinished_lines, lines[i])
-		end
+		finished_lines = math.max(0, finished_lines + #lines - 1)
+		response = { lines[#lines] }
 
-		vim.api.nvim_buf_set_lines(buf, first_line + finished_lines, first_line + finished_lines, false, unfinished_lines)
-
-		local new_finished_lines = math.max(0, #lines - 1)
-		-- for i = finished_lines, new_finished_lines do
-		-- 	vim.api.nvim_buf_add_highlight(buf, qt.ns_id, hl_handler_group, first_line + i, 0, -1)
-		-- end
-		finished_lines = new_finished_lines
-
-		local end_line = first_line + #vim.split(response, "\n")
+		local end_line = first_line + finished_lines + 1
 		qt.first_line = first_line
 		qt.last_line = end_line - 1
 

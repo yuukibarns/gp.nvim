@@ -434,6 +434,8 @@ M.prep_md = function(buf)
 	vim.api.nvim_command("setlocal noswapfile")
 	-- better text wrapping
 	vim.api.nvim_command("setlocal wrap linebreak")
+	-- less undo
+	vim.api.nvim_command("setlocal undolevels=10")
 	-- auto save on TextChanged, InsertLeave
 	vim.api.nvim_command("autocmd TextChanged,InsertLeave <buffer=" .. buf .. "> silent! write")
 
@@ -1091,13 +1093,12 @@ M.chat_respond = function(params)
 	local last_content_line = M.helpers.last_content_line(buf)
 	vim.api.nvim_buf_set_lines(buf, last_content_line, last_content_line, false, { "", agent_prefix .. agent_suffix, "" })
 
-	local offset = 0
+	local offset = 1
 	local is_reasoning = false
 	-- Add CoT for DeepSeekReasoner
 	if string.match(agent_name, "^DeepSeekReasoner") then
 		vim.api.nvim_buf_set_lines(buf, last_content_line + 3, last_content_line + 3, false,
 			{ "<think>", "<details>", "<summary>CoT</summary>", "" })
-		offset = 1
 		is_reasoning = true
 	end
 
@@ -1133,8 +1134,12 @@ M.chat_respond = function(params)
 			M.helpers.undojoin(buf)
 			vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "" })
 
+			if qt.response and qt.response ~= "" then
+				vim.system({ "notify-send", agent_name, qt.response })
+			end
+
 			-- if topic is ?, then generate it
-			if headers.topic == "?" then
+			if headers.topic == "?" and qt.response and qt.response ~= "" then
 				-- insert last model response
 				table.insert(messages, { role = "assistant", content = qt.response })
 
