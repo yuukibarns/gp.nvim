@@ -247,9 +247,9 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 
 				if line:match("choices") and line:match("delta") and line:match("content") then
 					line = vim.json.decode(line)
-					if line.choices[1] and line.choices[1].delta and line.choices[1].delta.reasoning_content then
-						reasoning_content = reasoning_content .. line.choices[1].delta.reasoning_content
-					end
+					-- if line.choices[1] and line.choices[1].delta and line.choices[1].delta.reasoning_content then
+					-- 	reasoning_content = reasoning_content .. line.choices[1].delta.reasoning_content
+					-- end
 					if line.choices[1] and line.choices[1].delta and line.choices[1].delta.content then
 						content = content .. line.choices[1].delta.content
 					end

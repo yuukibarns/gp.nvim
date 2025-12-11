@@ -1096,11 +1096,11 @@ M.chat_respond = function(params)
 	local offset = 1
 	local is_reasoning = false
 	-- Add CoT for DeepSeekReasoner
-	if string.match(agent_name, "^DeepSeekReasoner") then
-		vim.api.nvim_buf_set_lines(buf, last_content_line + 3, last_content_line + 3, false,
-			{ "<think>", "<details>", "<summary>CoT</summary>", "" })
-		is_reasoning = true
-	end
+	-- if string.match(agent_name, "^DeepSeekReasoner") then
+	-- 	vim.api.nvim_buf_set_lines(buf, last_content_line + 3, last_content_line + 3, false,
+	-- 		{ "<think>", "<details>", "<summary>CoT</summary>", "" })
+	-- 	is_reasoning = true
+	-- end
 
 	-- call the model and write response
 	M.dispatcher.query(
