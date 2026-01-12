@@ -174,6 +174,8 @@ D.prepare_payload = function(messages, model, provider)
 		top_p = math.max(0, math.min(1, model.top_p or 1)),
 	}
 
+	output.stream_options = { include_usage = true }
+
 	if (provider == "openai" or provider == "copilot") and model.model:sub(1, 1) == "o" then
 		if model.model:sub(1, 2) == "o3" then
 			output.reasoning_effort = model.reasoning_effort or "medium"
@@ -252,6 +254,33 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 					-- end
 					if line.choices[1] and line.choices[1].delta and line.choices[1].delta.content then
 						content = content .. line.choices[1].delta.content
+					end
+				else
+					-- attempt to parse lines possibly containing usage or done
+					local ok, decoded = pcall(vim.json.decode, line)
+					if ok and decoded and decoded.usage then
+						local usage = decoded.usage
+
+						local PROMPT_COST_PER_1K = 0.01225
+						local COMPLETION_COST_PER_1K = 0.098
+
+						local prompt_tokens = usage.prompt_tokens or 0
+						local completion_tokens = usage.completion_tokens or 0
+
+						local prompt_cost = prompt_tokens * PROMPT_COST_PER_1K / 1000
+						local completion_cost = completion_tokens * COMPLETION_COST_PER_1K / 1000
+						local total_cost = prompt_cost + completion_cost
+
+						local message = string.format(
+							"Tokens usage: prompt=%d, completion=%d, total=%d, cost≈¥%.4f",
+							prompt_tokens,
+							completion_tokens,
+							usage.total_tokens or (prompt_tokens + completion_tokens),
+							total_cost
+						)
+						vim.schedule(function()
+							vim.api.nvim_echo({ { message, "MoreMsg" } }, true, {})
+						end)
 					end
 				end
 

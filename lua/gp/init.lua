@@ -997,6 +997,7 @@ M.chat_respond = function(params)
 
 	local agent = M.get_chat_agent()
 	local agent_name = agent.name
+	local agent_provider = agent.provider
 
 	-- if model contains { } then it is a json string otherwise it is a model name
 	if headers.model and headers.model:match("{.*}") then
@@ -1030,7 +1031,7 @@ M.chat_respond = function(params)
 		agent_suffix = M.config.chat_assistant_prefix[2] or ""
 	end
 	---@diagnostic disable-next-line: cast-local-type
-	agent_suffix = M.render.template(agent_suffix, { ["{{agent}}"] = agent_name })
+	agent_suffix = M.render.template(agent_suffix, { ["{{agent}}"] = agent_name, ["{{provider}}"] = agent_provider })
 
 	local old_default_user_prefix = "🗨:"
 	local in_cot_block = false -- Flag to track if we're inside a CoT block
@@ -1089,12 +1090,105 @@ M.chat_respond = function(params)
 		message.content = message.content:gsub("^%s*(.-)%s*$", "%1")
 	end
 
+	-- Process images in user messages (Multimodal support)
+	-- We process all user messages because typical chat models require full context history
+	for _, message in ipairs(messages) do
+		if message.role == "user" and type(message.content) == "string" then
+			local text = message.content
+			-- Quick check if potential image markers exist to save processing
+			if text:find("!%[.-%]%(") or text:find("<img") then
+				local parts = {}
+				local cursor = 1
+				local has_image = false
+
+				while cursor <= #text do
+					-- Find next Markdown image: ![alt](url)
+					local s_md, e_md, link_md = text:find("!%[.-%]%((.-)%)", cursor)
+					-- Find next HTML image: <img src="url">
+					local s_html, e_html, link_html = text:find('<img.-src=["\'](.-)["\'].->', cursor)
+
+					local match_start, match_end, match_url
+
+					-- Determine which match comes first
+					if s_md and s_html then
+						if s_md < s_html then
+							match_start, match_end, match_url = s_md, e_md, link_md
+						else
+							match_start, match_end, match_url = s_html, e_html, link_html
+						end
+					elseif s_md then
+						match_start, match_end, match_url = s_md, e_md, link_md
+					elseif s_html then
+						match_start, match_end, match_url = s_html, e_html, link_html
+					end
+
+					if not match_start then
+						-- No more images, add remaining text
+						local remaining = text:sub(cursor)
+						if remaining:match("%S") then
+							table.insert(parts, { type = "text", text = remaining })
+						end
+						break
+					end
+
+					-- Add text before the image
+					if match_start > cursor then
+						local prev_text = text:sub(cursor, match_start - 1)
+						if prev_text:match("%S") then
+							table.insert(parts, { type = "text", text = prev_text })
+						end
+					end
+
+					-- Process the image
+					local image_path = vim.fn.expand(match_url)
+					if vim.fn.filereadable(image_path) == 1 then
+						-- Use standard io open to read binary
+						local file = io.open(image_path, "rb")
+						if file then
+							local data = file:read("*a")
+							file:close()
+							if data then
+								local encoded = vim.base64.encode(data)
+								if encoded then
+									-- simple extension check for mime type
+									local ext = image_path:match("^.+%.(.+)$"):lower()
+									local mime = "image/jpeg"
+									if ext == "png" then mime = "image/png" end
+									if ext == "webp" then mime = "image/webp" end
+									if ext == "gif" then mime = "image/gif" end
+
+									table.insert(parts, {
+										type = "image_url",
+										image_url = {
+											url = "data:" .. mime .. ";base64," .. encoded,
+										},
+									})
+									has_image = true
+								end
+							end
+						end
+					else
+						-- If file invalid, keep as text so user knows
+						table.insert(parts, { type = "text", text = text:sub(match_start, match_end) })
+					end
+
+					cursor = match_end + 1
+				end
+
+				if has_image then
+					message.content = parts
+				end
+			end
+		end
+	end
+
 	-- write assistant prompt
 	local last_content_line = M.helpers.last_content_line(buf)
 	vim.api.nvim_buf_set_lines(buf, last_content_line, last_content_line, false, { "", agent_prefix .. agent_suffix, "" })
 
 	local offset = 1
 	local is_reasoning = false
+
 	-- Add CoT for DeepSeekReasoner
 	-- if string.match(agent_name, "^DeepSeekReasoner") then
 	-- 	vim.api.nvim_buf_set_lines(buf, last_content_line + 3, last_content_line + 3, false,
