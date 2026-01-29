@@ -70,129 +70,22 @@ end
 ---@param model string | table
 ---@param provider string | nil
 D.prepare_payload = function(messages, model, provider)
-	if type(model) == "string" then
-		return {
-			model = model,
-			stream = true,
-			messages = messages,
-		}
-	end
-
-	if provider == "googleai" then
-		for i, message in ipairs(messages) do
-			if message.role == "system" then
-				messages[i].role = "user"
-			end
-			if message.role == "assistant" then
-				messages[i].role = "model"
-			end
-			if message.content then
-				messages[i].parts = {
-					{
-						text = message.content,
-					},
-				}
-				messages[i].content = nil
-			end
-		end
-		local i = 1
-		while i < #messages do
-			if messages[i].role == messages[i + 1].role then
-				table.insert(messages[i].parts, {
-					text = messages[i + 1].parts[1].text,
-				})
-				table.remove(messages, i + 1)
-			else
-				i = i + 1
-			end
-		end
-		local payload = {
-			contents = messages,
-			safetySettings = {
-				{
-					category = "HARM_CATEGORY_HARASSMENT",
-					threshold = "BLOCK_NONE",
-				},
-				{
-					category = "HARM_CATEGORY_HATE_SPEECH",
-					threshold = "BLOCK_NONE",
-				},
-				{
-					category = "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-					threshold = "BLOCK_NONE",
-				},
-				{
-					category = "HARM_CATEGORY_DANGEROUS_CONTENT",
-					threshold = "BLOCK_NONE",
-				},
-			},
-			generationConfig = {
-				temperature = math.max(0, math.min(2, model.temperature or 1)),
-				maxOutputTokens = model.max_tokens or 8192,
-				topP = math.max(0, math.min(1, model.top_p or 1)),
-				topK = model.top_k or 100,
-			},
-			model = model.model,
-		}
-		return payload
-	end
-
-	if provider == "anthropic" then
-		local system = ""
-		local i = 1
-		while i < #messages do
-			if messages[i].role == "system" then
-				system = system .. messages[i].content .. "\n"
-				table.remove(messages, i)
-			else
-				i = i + 1
-			end
-		end
-
-		local payload = {
-			model = model.model,
-			stream = true,
-			messages = messages,
-			system = system,
-			max_tokens = model.max_tokens or 4096,
-			temperature = math.max(0, math.min(2, model.temperature or 1)),
-			top_p = math.max(0, math.min(1, model.top_p or 1)),
-		}
-		return payload
-	end
-
-	if provider == "copilot" and model.model == "gpt-4o" then
-		model.model = "gpt-4o-2024-05-13"
-	end
-
-	local output = {
-		model = model.model,
+	local payload = {
 		stream = true,
+		stream_options = { include_usage = true },
 		messages = messages,
-		max_tokens = model.max_tokens or 4096,
-		temperature = math.max(0, math.min(2, model.temperature or 1)),
-		top_p = math.max(0, math.min(1, model.top_p or 1)),
 	}
 
-	output.stream_options = { include_usage = true }
-
-	if (provider == "openai" or provider == "copilot") and model.model:sub(1, 1) == "o" then
-		if model.model:sub(1, 2) == "o3" then
-			output.reasoning_effort = model.reasoning_effort or "medium"
-		end
-
-		for i = #messages, 1, -1 do
-			if messages[i].role == "system" then
-				table.remove(messages, i)
-			end
-		end
-		-- remove max_tokens, top_p, temperature for o1 models. https://platform.openai.com/docs/guides/reasoning/beta-limitations
-		output.max_tokens = nil
-		output.temperature = nil
-		output.top_p = nil
+	if type(model) == "string" then
+		payload.model = model
+	else
+		payload.model = model.model
+		payload.max_tokens = model.max_tokens
+		payload.temperature = model.temperature
+		payload.top_p = model.top_p
 	end
 
-	return output
+	return payload
 end
 
 -- gpt query
@@ -283,24 +176,6 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 						end)
 					end
 				end
-
-				-- if qt.provider == "anthropic" and line:match('"text":') then
-				-- 	if line:match("content_block_start") or line:match("content_block_delta") then
-				-- 		line = vim.json.decode(line)
-				-- 		if line.delta and line.delta.text then
-				-- 			content = line.delta.text
-				-- 		end
-				-- 		if line.content_block and line.content_block.text then
-				-- 			content = line.content_block.text
-				-- 		end
-				-- 	end
-				-- end
-				--
-				-- if qt.provider == "googleai" then
-				-- 	if line:match('"text":') then
-				-- 		content = vim.json.decode("{" .. line .. "}").text
-				-- 	end
-				-- end
 			end
 
 			if reasoning_content ~= "" and type(reasoning_content) == "string" then
@@ -343,18 +218,6 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 				if #buffer > 0 then
 					process_lines(buffer)
 				end
-				-- local raw_response = qt.raw_response
-				-- local content = qt.response
-				-- if (qt.provider == 'openai' or qt.provider == 'copilot') and content == "" and raw_response:match('choices') and raw_response:match("content") then
-				-- 	local response = vim.json.decode(raw_response)
-				-- 	if response.choices and response.choices[1] and response.choices[1].message and response.choices[1].message.content then
-				-- 		content = response.choices[1].message.content
-				-- 	end
-				-- 	if content and type(content) == "string" then
-				-- 		qt.response = qt.response .. content
-				-- 		handler(qid, content)
-				-- 	end
-				-- end
 
 				if is_reasoning then
 					handler(qid, "", true, true)
@@ -365,9 +228,9 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 					handler(qid, "", false, true)
 				end
 
-				-- if qt.response == "" then
-				-- 	logger.error(qt.provider .. " response is empty: \n" .. vim.inspect(qt.raw_response))
-				-- end
+				if qt.response == "" then
+					logger.error(qt.provider .. " response is empty: \n" .. vim.inspect(qt.raw_response))
+				end
 
 				-- optional on_exit handler
 				if type(on_exit) == "function" then
