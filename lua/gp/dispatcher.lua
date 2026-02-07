@@ -151,7 +151,7 @@ local query = function(buf, provider, payload, handler, on_exit, callback, is_re
 				else
 					-- attempt to parse lines possibly containing usage or done
 					local ok, decoded = pcall(vim.json.decode, line)
-					if ok and decoded and decoded.usage then
+					if ok and decoded and type(decoded.usage) == "table" then
 						local usage = decoded.usage
 
 						local PROMPT_COST_PER_1K = 0.01225
